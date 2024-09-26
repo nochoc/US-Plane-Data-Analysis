@@ -1,0 +1,457 @@
+---
+title: "ST2195_Coursework"
+author: "Caleb Lee"
+date: "2023-02-25"
+output: html_document
+---
+
+#This coursework will be using years 2005 and 2006, as well as airports/carriers/planedata csvs
+
+#Please set wd to folder where the coursework dataset and dataverse files are located:
+#setwd("~/Desktop/ST2195 Coursework")
+
+**Install packages and load the libraries**
+```{r}
+library(dplyr)
+library(ggplot2)
+library(reshape2)
+library(tidyr)
+library(ggthemes)
+```
+
+**Read and load data**
+```{r}
+airports <- read.csv("airports.csv", header = TRUE)
+carriers <- read.csv("carriers.csv", header = TRUE)
+planedata <- read.csv("plane-data.csv", header = TRUE)
+
+year2005 <- read.csv("2005.csv")
+year2006 <- read.csv("2006.csv")
+```
+
+###Prepare the data
+```{r}
+#Row bind data from 2005 and 2006
+flights <- rbind(year2005,year2006)
+
+#remove cancelled and diverted flights
+flights <- flights %>%
+  filter(Cancelled == 0, Diverted == 0)
+
+#Keep distinct rows
+flights <- distinct(flights)
+```
+
+**Q1: When is the best time of day, day of week, time of year to fly to minimise delays?**
+
+*Q1 Part 1: Best Time of Day*
+```{r}
+#Convert the departure time to a time of day in hours
+flights$DepHour <- floor(flights$CRSDepTime / 100)
+
+#Create a new column with the four-hour interval
+Intervals <- cut(flights$DepHour, breaks = c(0, 4, 8, 12, 16, 20, 24), right = FALSE)
+
+#Calculate the mean delay for each four-hour interval
+delay_by_interval <- aggregate(flights$ArrDelay, by = list(Intervals), FUN = mean)
+
+#Rename the columns of the result
+colnames(delay_by_interval) <- c("Time", "Avg_Delay")
+delay_by_interval$Time <- c("0000 - 0400","0400 - 0800","0800 - 1200","1200 - 1600","1600 - 2000", "2000 - 2400")
+
+delay_by_interval
+```
+
+```{r}
+#Plot the graph
+ggplot(delay_by_interval, aes(x = factor(Time), y = Avg_Delay)) +
+  geom_bar(stat = "identity", fill = "steelblue") +
+  labs(x = "Time of Day", y = "Average Arrival Delay") +
+  ggtitle("Best Time of Day to Fly to Minimize Delay") +
+  theme_fivethirtyeight() +
+  theme(axis.title = element_text())
+```
+
+*Q1 Part 2: Best day of week*
+```{r}
+#Calculate mean delay for each day of the week
+delay_by_day <- aggregate(flights$ArrDelay, list(flights$DayOfWeek), FUN = mean)
+
+#Name the columns and rows
+colnames(delay_by_day) <- c("Day_of_week", "Avg_Delay")
+delay_by_day$`Day_of_week` <- factor(c("Mon","Tue","Wed","Thu","Fri","Sat","Sun"), levels=c("Mon","Tue","Wed","Thu","Fri","Sat","Sun"))
+
+delay_by_day
+```
+
+```{r}
+#Plot the graph
+ggplot(delay_by_day, aes(x = Day_of_week, y = Avg_Delay)) +
+  geom_bar(stat = "identity", fill = "steelblue") +
+  labs(x = "Day of week", y = "Average Arrival Delay") +
+  ggtitle("Best Day of week to Fly to Minimize Delay") +
+  theme_fivethirtyeight() +
+  theme(axis.title = element_text())
+```
+
+*Q1 Part 3: Best time of year*
+```{r}
+#Calculate mean delay for each month
+delay_by_month <- aggregate(flights$ArrDelay, list(flights$Month), FUN = mean)
+
+#Name the columns and rows
+colnames(delay_by_month) <- c("Month", "Avg_Delay")
+delay_by_month$Month <- c("Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec")
+
+delay_by_month 
+```
+
+```{r}
+#Plot the graph
+ggplot(delay_by_month, aes(x = factor(Month, levels = c("Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec")), y = Avg_Delay)) +
+  geom_bar(stat = "identity", fill = "steelblue") +
+  labs(x = "Month", y = "Average Arrival Delay") +
+  ggtitle("Best Month to Fly to Minimize Delay") +
+  theme_fivethirtyeight() +
+  theme(axis.title = element_text())
+```
+
+*Q2: Do older planes suffer more delays?*
+
+*Prepare the data*
+```{r}
+#Keep only the columns we need
+planedata <- planedata %>% 
+  select(tailnum, year)
+
+#Rename year in planedata to avoid mistakes with flights$Year
+names(planedata)[2] <- "Manufactured_Year"
+
+#Filter out tail numbers that are not in flight data
+tailnumbers <- unique(flights$TailNum)
+planedata <- planedata %>% 
+  filter(tailnum %in% tailnumbers)
+
+#Remove rows with NAs
+planedata <- na.omit(planedata)
+planedata <- planedata %>%
+  filter(Manufactured_Year != "None" & Manufactured_Year != "" &  Manufactured_Year != "0000" &  Manufactured_Year <= 2006)
+
+#Merge with flights data and remove NAs
+plane_age <- flights %>% 
+  inner_join(planedata, by = c("TailNum" = "tailnum")) %>%
+  filter(!is.na(Manufactured_Year))
+```
+
+```{r}
+#Calculate age of each plane in years and find the range
+plane_age$age_of_plane <- as.numeric(plane_age$Year) - as.numeric(plane_age$Manufactured_Year)
+range(plane_age$age_of_plane) 
+```
+
+```{r}
+#Arrange the data
+plane_age_summary <- plane_age %>%
+  filter(ArrDelay > 0) %>%
+  group_by(age_of_plane) %>%
+  summarise(avg_delay = mean(ArrDelay),total_flights = n()) %>%
+  arrange(age_of_plane)
+
+#Plot graph to see an overall view on average delay by plane age
+ggplot(plane_age_summary, aes(x = age_of_plane, y = avg_delay)) +
+  geom_point(size = 3, color = "steelblue") +
+  geom_smooth(method = lm, se = FALSE, color = "black") +
+  labs(title = "Average Arrival Delay by Plane Age", x = "Plane Age", y = "Average Arrival Delay (Min)") +
+  theme_fivethirtyeight() +
+  theme(axis.title = element_text())
+```
+
+*Since the spread is very big for older planes, we need to check the number of flights between older and newer planes*
+
+```{r}
+older_planes <- plane_age_summary %>%
+  filter(age_of_plane > 25)
+sum(older_planes$total_flights) #total number of flights is 147518
+
+newer_planes <- plane_age_summary %>%
+  filter(age_of_plane <= 25)
+sum(newer_planes$total_flights) #total number of flights is 4515433
+```
+
+*As there are a lot fewer flights from older planes, the results might not be accurate. Thus we use newer_planes to plot another graph as the sample size is larger.*
+
+```{r}
+ggplot(newer_planes, aes(x = age_of_plane, y = avg_delay)) +
+  geom_point(size = 3, color = "steelblue") +
+  geom_smooth(method = lm, se = FALSE, color = "black") +
+  labs(title = "Average Arrival Delay by Plane Age(Newer Planes)", x = "Plane Age", y = "Average Arrival Delay (Min)") +
+  theme_fivethirtyeight() +
+  theme(axis.title = element_text())
+```
+
+*We look at the data frame and see that there is a large increase in flights for planes aged 21 from 20, from less than 21000 for 21 year old planes, to over 70000 for 20 year old planes. Thus, we decide to filter out planes with less than 70000 flights*
+
+```{r}
+newer_planes_v2 <- newer_planes %>%
+  filter(total_flights > 70000)
+newer_planes_v2
+
+#Plot graph for newer_planes with significantly more flights
+ggplot(newer_planes_v2, aes(x = age_of_plane, y = avg_delay)) +
+  geom_point(size = 3, color = "steelblue") +
+  geom_smooth(method = lm, se = FALSE, color = "black") +
+  labs(title = "Average Arrival Delay by Plane Age(Newer Planes_V2)", x = "Plane Age", y = "Average Arrival Delay (Min)") +
+  theme_fivethirtyeight() +
+  theme(axis.title = element_text())
+```
+
+**Q3: How does the number of people flying between different locations change over time?**
+
+*Since there is no passenger information, we will base this question on the number of flights instead.*
+
+```{r}
+#Combine Origin and Destination into Route
+flights <- flights %>%
+  mutate(Route = paste(Origin, Dest, sep = "-"))
+```
+
+```{r}
+#Filter for flights in years 2005 and 2006
+flights_0506 <- flights %>%
+  filter(Year %in% c("2005", "2006"))
+```
+
+```{r}
+#Count routes in 2005 and 2006
+route_0506 <- flights_0506 %>%
+  group_by(Route, Year) %>%
+  summarize(Total_Flights = n()) %>%
+  pivot_wider(names_from = "Year", values_from = "Total_Flights")
+```
+
+```{r}
+#Calculate the difference in flights between 2005 and 2006
+route_0506$Difference <- route_0506$"2006" - route_0506$"2005"
+
+#Get the top 10 routes with the highest increase in flights
+top_routes <- route_0506 %>%
+  arrange(-Difference) %>%
+  head(10)
+
+#Get the bottom 10 routes with the lowest increase in flights
+bottom_routes <- route_0506 %>%
+  arrange(Difference) %>%
+  head(10)
+```
+
+```{r}
+#Melt the data frames for visualization
+top_routes_melt <- melt(top_routes, id.vars = "Route", variable.name = "Year", value.name = "Total_Flights")
+bottom_routes_melt <- melt(bottom_routes, id.vars = "Route", variable.name = "Year", value.name = "Total_Flights")
+```
+
+```{r}
+#Visualize the top 10 routes with the highest increase in flights
+ggplot(top_routes_melt, aes(Route, Total_Flights, fill = Year)) +
+  geom_bar(position = "dodge", stat = "identity") +
+  labs(title = "Top 10 Routes with the Highest Increase in Flights (2005 - 2006)",
+       x = "Route", y = "Total Flights") +
+  theme_fivethirtyeight() +
+  theme(axis.title = element_text()) +
+  theme(plot.title = element_text(hjust = 0.5)) +
+  geom_text(aes(label = round(Total_Flights)), position = position_dodge(0.9),
+            color = "black", vjust = 1.5, hjust = 0.5, size = 2.5) +
+  scale_y_continuous(labels = scales::comma) +
+  scale_fill_manual(values = c("#FF9999", "#66CCCC", "#CC99FF"))
+```
+
+```{r}
+#Visualize the bottom 10 routes with the lowest increase in flights
+ggplot(bottom_routes_melt, aes(Route, Total_Flights, fill = Year)) +
+  geom_bar(position = "dodge", stat = "identity") +
+  labs(title = "Bottom 10 Routes with the Lowest Increase in Flights (2005 - 2006)",
+       x = "Route", y = "Total Flights") +
+  theme(plot.title = element_text(hjust = 0.5)) +
+  theme_fivethirtyeight() +
+  theme(axis.title = element_text()) + 
+  geom_text(aes(label = round(Total_Flights)), position = position_dodge(0.9),
+            color = "black", vjust = 1.5, hjust = 0.5, size = 2.5) +
+  scale_y_continuous(labels = scales::comma) +
+  scale_fill_manual(values = c("#FF9999", "#66CCCC", "#CC99FF"))
+```
+
+```{r}
+#Check if there was an overall increase in flights from 2005 - 2006
+sum_of_route2005 <- route_0506$"2005" %>%
+  na.omit() %>%
+  sum()
+
+sum_of_route2006 <- route_0506$"2006" %>%
+  na.omit() %>%
+  sum()
+
+sum_of_difference <- sum_of_route2006 - sum_of_route2005
+
+compare_sums <- data.frame(Year = c("2005", "2006", "Difference"),
+                           Total_Flights = c(sum_of_route2005, 
+                                             sum_of_route2006, 
+                                             sum_of_difference))
+```
+
+```{r}
+#Create a bar plot to show the number of flights and the difference between 2005 and 2006
+ggplot(compare_sums, aes(x = Year, y = Total_Flights, fill = Year)) + 
+  geom_bar(stat = "identity") +
+  labs(title = "Total Flights per Year", x = "Year", y = "Total Flights") +
+  theme(plot.title = element_text(hjust = 0.5)) +
+  theme_fivethirtyeight() +
+  theme(axis.title = element_text()) +
+  scale_fill_manual(values = c("#008B8B", "#FF6347", "#9ACD32")) +
+  geom_text(aes(label = Total_Flights), vjust = -0.5, size = 4)
+```
+
+*Q4: Can you detect cascading failures as delays in one airport create delays in others?*
+
+```{r}
+#Merge airport information with existing data frame "plane_age"
+cascading_failures <- plane_age %>%
+  left_join(airports %>% select(iata, airport, city), by = c("Origin" = "iata")) %>%
+  rename(OriginAirport = airport, OriginCity = city) %>%
+  left_join(airports %>% select(iata, airport, city), by = c("Dest" = "iata")) %>%
+  rename(DestAirport = airport, DestCity = city)
+```
+
+```{r}
+#Calculate the airport with the most flights
+most_flights <- cascading_failures %>%
+  count(Origin) %>%
+  arrange(desc(n)) %>%
+  slice(1) %>%
+  pull(Origin) #lets call this Airport A
+```
+
+```{r}
+#calculate the effect of departure delay in one airport on arrival delay in the airport with the most flights
+delay_effect <- cascading_failures %>%
+  filter(Origin == most_flights) %>%
+  group_by(Dest) %>%
+  summarize(avg_arr_delay = mean(ArrDelay, na.rm = TRUE),
+            avg_dep_delay = mean(DepDelay, na.rm = TRUE),
+            count = n()) %>%
+  filter(count > 100) %>%
+  ungroup() #avg_arr_delay = flights from Airport A arrive late 
+            #avg_dep_delay = flights from Airport A departed late
+```
+
+```{r}
+#visualise effect of arrival and departure delay
+ggplot(delay_effect, aes(x = avg_dep_delay, y = avg_arr_delay)) +
+  geom_point() +
+  geom_smooth(method = lm, se = FALSE, color = "seagreen") +
+  labs(title = "Impact of Departure Delay on Arrival Delay",
+       x = "Average Departure Delay",
+       y = "Average Arrival Delay") +
+  theme_fivethirtyeight() +
+  theme(axis.title = element_text())
+#from this we know that if the plane departs late, it will most likely arrive late
+```
+
+```{r}
+#Calculate the effect of arrival delay on the subsequent departure delay
+delay_cascade <- cascading_failures %>%
+  semi_join(delay_effect, by = c("Dest" = "Dest")) %>%
+  group_by(Origin) %>%
+  summarize(avg_delay = mean(DepDelay, na.rm = TRUE)) %>%
+  ungroup() 
+```
+
+*Take the dest countries that have experienced delay because of Airport A - this data shows the avg_dep_delay for each airport that is affected by delays from Airport A*
+
+```{r}
+#Plot the data to show the average departure delay of flights leaving each airport
+ggplot(delay_cascade, aes(x = reorder(Origin, avg_delay), y = avg_delay)) +
+  geom_bar(stat = "identity", fill = "steelblue") +
+  labs(title = "Departure Delay Cascade by Origin Airport",
+       x = "Origin Airport",
+       y = "Average Departure Delay") +
+  theme(plot.title = element_text(hjust = 0.5),
+        axis.text.x = element_text(angle = 90, hjust = 1)) +
+  theme_fivethirtyeight() +
+  theme(axis.title = element_text())
+```
+
+*Q5: Use the available variables to construct a model that predicts delays.*
+
+*load the libraries*
+```{r}
+library(tidyverse)
+library(skimr)
+library(caret)
+library(ranger)
+```
+
+```{r}
+# check and read in data
+skim(flights)
+df <- flights %>%
+  select(Year, Month, DayofMonth, CRSDepTime, CRSArrTime, DepDelay, ArrDelay, FlightNum, Distance)
+df <- sample_n(df,100000)
+```
+
+```{r}
+#create train and test sets
+set.seed(123)
+n <- nrow(df)
+train_size <- 0.7
+train_indices <- sample(n, round(train_size*n))
+train_set <- df[train_indices, ]
+test_set <- df[-train_indices, ]
+```
+
+```{r}
+# define linear regression model
+model_linear <- train(ArrDelay ~ ., data = train_set, method = "lm", 
+                      trControl = trainControl(method = "cv", number = 5))
+pred_linear <- predict(model_linear, newdata = test_set)
+mse_linear <- mean((test_set$ArrDelay - pred_linear)^2)
+```
+
+```{r}
+# define ridge regression model
+model_ridge <- train(ArrDelay ~ ., train_set, method = "glmnet", 
+                     trControl = trainControl(method = "cv", number = 5), 
+                     tuneGrid = expand.grid(alpha = 1, lambda = seq(0, 1, 0.1)))
+pred_ridge <- predict(model_ridge, newdata = test_set)
+mse_ridge <- mean((test_set$ArrDelay - pred_ridge)^2)
+```
+
+```{r}
+# define random forest model
+tunegrid <- expand.grid(.mtry = 2:5, .splitrule = 'extratrees', .min.node.size = 4)
+model_rf <- train(ArrDelay ~ ., train_set, method = "ranger", 
+                  trControl = trainControl(method = "cv", number = 5), 
+                  tuneGrid = tunegrid,
+                  num.trees = 100)
+pred_rf <- predict(model_rf, newdata = test_set)
+mse_rf <- mean((test_set$ArrDelay - pred_rf)^2)
+```
+
+```{r}
+# print out MSEs for each model
+cat("MSE for linear regression:", mse_linear, "\n")
+cat("MSE for ridge regression:", mse_ridge, "\n")
+cat("MSE for random forest:", mse_rf, "\n")
+
+#compare MSEs
+mse_comparison_df <- data.frame(MSE = c(mse_linear,mse_ridge,mse_rf),
+                                Model = c("Linear Regression", "Ridge Regression", "Random Forest"))
+mse_comparison_df
+```
+
+```{r}
+ggplot(mse_comparison_df, aes(x=Model, y=MSE)) + 
+  geom_bar(stat="identity", fill="steelblue") +
+  labs(x="Model", y="Mean Squared Error", title="Comparison of MSE between Linear Regression, Ridge Regression and Random Forest") +
+  theme_fivethirtyeight() +
+  theme(axis.title = element_text())
+```
